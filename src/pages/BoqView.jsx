@@ -195,26 +195,6 @@ export default function BoqView() {
             </ol>
           </div>
           <div className="boq-sign-col">
-            <div className="boq-stamp" aria-hidden>
-              <svg viewBox="0 0 120 120" width="88" height="88">
-                <circle cx="60" cy="60" r="56" fill="none" stroke="#2b6cb0" strokeWidth="3" />
-                <circle cx="60" cy="60" r="44" fill="none" stroke="#2b6cb0" strokeWidth="1.5" />
-                <text x="60" y="54" textAnchor="middle" fill="#2b6cb0" fontSize="9" fontWeight="700" fontFamily="Arial">
-                  ORANGE
-                </text>
-                <text x="60" y="68" textAnchor="middle" fill="#2b6cb0" fontSize="9" fontWeight="700" fontFamily="Arial">
-                  INTERIOR
-                </text>
-                <path
-                  id="stampArc"
-                  d="M 20,60 a 40,40 0 1,1 80,0 a 40,40 0 1,1 -80,0"
-                  fill="none"
-                />
-                <text fill="#2b6cb0" fontSize="7" fontFamily="Arial">
-                  <textPath href="#stampArc" startOffset="8%">★ ORANGE INTERIOR ★ ORANGE INTERIOR ★</textPath>
-                </text>
-              </svg>
-            </div>
             <div className="boq-sign">
               <div>For Orange Interior</div>
               <div className="sign-space" />
