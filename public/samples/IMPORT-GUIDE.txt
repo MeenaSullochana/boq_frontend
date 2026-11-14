@@ -1,0 +1,69 @@
+ORANGE INTERIOR — Excel Import Guide
+====================================
+
+Order to import:
+1) Categories  → sample-categories.xlsx
+2) Brands      → sample-brands.xlsx   (optional)
+3) Products    → sample-products.xlsx
+
+In the app:
+- Categories page → Sample Excel → Excel import
+- Brands page → Sample Excel → Excel import
+- Products page → Sample Excel → Excel import
+
+
+CATEGORY COLUMNS
+----------------
+name          required
+type          category | subcategory | child
+code          optional (A, B, C…)
+parent        parent name (required for subcategory/child)
+description   optional
+sortOrder     optional number
+
+Import categories first (parents), then subcategories, then child rows.
+
+
+BRAND COLUMNS
+-------------
+name          required
+description   optional
+
+Brand is optional on products. Leave brand blank for "None".
+
+
+PRODUCT COLUMNS
+---------------
+name            required
+specification   optional (defaults to name)
+brand           optional (auto-creates brand if new name)
+unit            Nos | Sft | Rft | Sqm | Lumpsum
+rate            number
+category        category name (must already exist)
+subcategory     optional subcategory name
+child           optional child category name
+remarks         optional
+image           optional — see IMAGE RULES below
+
+
+IMAGE RULES (product import)
+----------------------------
+Excel cannot reliably embed image files for import.
+Use one of these in the "image" column:
+
+1) Full image URL (recommended)
+   https://example.com/photo.jpg
+   → system downloads and saves to uploads
+
+2) Filename already inside backend/uploads folder
+   my-product.jpg
+   → place file in backend/uploads first, then import
+
+Or leave image blank and upload image later from Add/Edit Product.
+
+
+TIPS
+----
+- Keep first row as column headers exactly as in the sample files
+- Category / brand / product names are matched by exact name text
+- Import categories before products so category names resolve
