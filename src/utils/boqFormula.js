@@ -5,12 +5,14 @@ export const FORMULA_TYPES = {
   NONE: 'none',
   W_H: 'W_H',
   W_D: 'W_D',
+  W_H_D: 'W_H_D',
 };
 
 export const FORMULA_OPTIONS = [
-  { value: 'none', label: 'None (Qty × Rate)', hint: 'Enter quantity × price' },
+  { value: 'none', label: 'None (Qty × Rate)', hint: 'Enter quantity × price — no W/H/D' },
   { value: 'W_H', label: 'Qty × (W × H)', hint: 'Quantity × Width × Height × Rate' },
   { value: 'W_D', label: 'Qty × (W × D)', hint: 'Quantity × Width × Depth × Rate' },
+  { value: 'W_H_D', label: 'Qty × (W × H × D)', hint: 'Quantity × Width × Height × Depth × Rate' },
 ];
 
 export const PRODUCT_FORMULA_OPTIONS = [
@@ -18,9 +20,19 @@ export const PRODUCT_FORMULA_OPTIONS = [
   ...FORMULA_OPTIONS,
 ];
 
+const AREA_FORMULAS = new Set([FORMULA_TYPES.W_H, FORMULA_TYPES.W_D, FORMULA_TYPES.W_H_D]);
+
+export function isAreaFormula(formulaType) {
+  return AREA_FORMULAS.has(formulaType);
+}
+
 export function inferFormulaType(name = '') {
   const n = String(name).toLowerCase();
   if (!n) return FORMULA_TYPES.NONE;
+
+  if (/volume|cubicle|tank\b|sump|rcc\s*column|concrete/.test(n)) {
+    return FORMULA_TYPES.W_H_D;
+  }
 
   if (/ceiling|flooring|floor\b|rcc|slab|lintel/.test(n)) {
     return FORMULA_TYPES.W_D;
@@ -39,9 +51,7 @@ export function inferFormulaType(name = '') {
 
 function categoryFormula(category = null) {
   if (!category) return null;
-  if (category.formulaType === FORMULA_TYPES.W_H || category.formulaType === FORMULA_TYPES.W_D) {
-    return category.formulaType;
-  }
+  if (isAreaFormula(category.formulaType)) return category.formulaType;
   if (category.name) {
     const inferred = inferFormulaType(category.name);
     if (inferred !== FORMULA_TYPES.NONE) return inferred;
@@ -51,7 +61,7 @@ function categoryFormula(category = null) {
 
 /**
  * Resolve BOQ formula:
- * 1) product override (none/W_H/W_D)
+ * 1) product override (none/W_H/W_D/W_H_D)
  * 2) category formula / inferred from category name
  * 3) unit fallback
  */
@@ -61,27 +71,19 @@ export function resolveFormulaType(item = {}, category = null, { preferItem = fa
   }
 
   const productFormula = product?.formulaType ?? item.productFormulaType;
-  if (
-    productFormula === FORMULA_TYPES.NONE ||
-    productFormula === FORMULA_TYPES.W_H ||
-    productFormula === FORMULA_TYPES.W_D
-  ) {
+  if (productFormula === FORMULA_TYPES.NONE || isAreaFormula(productFormula)) {
     return productFormula;
   }
 
   const fromCat = categoryFormula(category);
-  if (fromCat === FORMULA_TYPES.W_H || fromCat === FORMULA_TYPES.W_D) {
-    return fromCat;
-  }
+  if (isAreaFormula(fromCat)) return fromCat;
 
   if (item.categoryLabel) {
     const inferred = inferFormulaType(item.categoryLabel);
     if (inferred !== FORMULA_TYPES.NONE) return inferred;
   }
 
-  if (item.formulaType === FORMULA_TYPES.W_H || item.formulaType === FORMULA_TYPES.W_D) {
-    return item.formulaType;
-  }
+  if (isAreaFormula(item.formulaType)) return item.formulaType;
 
   const unit = String(item.unit || product?.unit || '').toLowerCase();
   if (unit === 'sft' || unit === 'sqm') return FORMULA_TYPES.W_H;
@@ -97,9 +99,8 @@ export function resolveProductBoqInfo(product = {}, category = null) {
 
 /**
  * Nos is always 1.
- * W/D/H use feet.inches (5.5 = 5'5" → 5 + 5/12 ft for area math).
- * - No formula:  Amount = Quantity × Rate
- * - With formula: Amount = Quantity × W × H (or D) × Rate
+ * - none: Amount = Quantity × Rate (no W/H/D)
+ * - W_H / W_D / W_H_D: Amount = Quantity × formula × Rate
  */
 export function calcLineItem(item = {}) {
   const rate = Number(item.rate) || 0;
@@ -114,6 +115,8 @@ export function calcLineItem(item = {}) {
     formulaArea = w * h;
   } else if (formulaType === FORMULA_TYPES.W_D) {
     formulaArea = w * d;
+  } else if (formulaType === FORMULA_TYPES.W_H_D) {
+    formulaArea = w * h * d;
   }
 
   const rawQty = Number(item.quantity);
@@ -131,14 +134,12 @@ export function calcLineItem(item = {}) {
     rate,
     amount,
     formulaType,
-    // keep typed feet.inches values (5.5 stays 5.5, not 5.4167)
     width: item.width === '' || item.width == null ? 0 : item.width,
     height: item.height === '' || item.height == null ? 0 : item.height,
     depth: item.depth === '' || item.depth == null ? 0 : item.depth,
   };
 }
 
-/** Map saved BOQ line → form quantity (supports legacy nos×area rows). */
 export function quantityFromSavedItem(item = {}) {
   if (item.quantity != null && item.quantity !== '') {
     const q = Number(item.quantity);
@@ -153,23 +154,25 @@ export function quantityFromSavedItem(item = {}) {
 }
 
 export function formulaNeedsDims(formulaType) {
-  return formulaType === FORMULA_TYPES.W_H || formulaType === FORMULA_TYPES.W_D;
+  return isAreaFormula(formulaType);
+}
+
+/** Which dim fields this formula needs. */
+export function formulaDimKeys(formulaType) {
+  if (formulaType === FORMULA_TYPES.W_H) return ['width', 'height'];
+  if (formulaType === FORMULA_TYPES.W_D) return ['width', 'depth'];
+  if (formulaType === FORMULA_TYPES.W_H_D) return ['width', 'height', 'depth'];
+  return [];
 }
 
 export function formulaLabel(t) {
   if (t === 'W_H') return 'Qty × (W × H)';
   if (t === 'W_D') return 'Qty × (W × D)';
+  if (t === 'W_H_D') return 'Qty × (W × H × D)';
   if (t === 'inherit') return 'Inherit category';
   return 'Qty × Rate';
 }
 
-/**
- * Feet.inches input (Indian BOQ style):
- * 5.5  → 5 feet 5 inches
- * 2.1  → 2 feet 1 inch
- * 10.11 → 10 feet 11 inches
- * 3    → 3 feet 0 inches
- */
 export function splitFeetInches(value) {
   if (value === '' || value == null) return null;
   const str = String(value).trim();
@@ -195,29 +198,34 @@ export function splitFeetInches(value) {
   return { feet, inches };
 }
 
-/** Convert feet.inches input to decimal feet for area (5.5 → 5 + 5/12). */
 export function parseFeetInchesInput(value) {
   const parts = splitFeetInches(value);
   if (!parts) return 0;
   return parts.feet + parts.inches / 12;
 }
 
-/** Format for specification: 5.5 → 5'5" */
 export function formatDimFeet(value) {
   const parts = splitFeetInches(value);
   if (!parts) return '';
   return `${parts.feet}'${parts.inches}"`;
 }
 
-/** Build `(Size : W 3'6" x H 1'6")` from dims. */
-export function buildSizeText({ width, depth, height } = {}) {
+/** Build size text only for dims that belong to the formula (or all provided). */
+export function buildSizeText({ width, depth, height } = {}, formulaType) {
+  const keys = formulaType ? formulaDimKeys(formulaType) : ['width', 'depth', 'height'];
   const parts = [];
-  const w = formatDimFeet(width);
-  const d = formatDimFeet(depth);
-  const h = formatDimFeet(height);
-  if (w) parts.push(`W ${w}`);
-  if (d) parts.push(`D ${d}`);
-  if (h) parts.push(`H ${h}`);
+  if (keys.includes('width')) {
+    const w = formatDimFeet(width);
+    if (w) parts.push(`W ${w}`);
+  }
+  if (keys.includes('depth')) {
+    const d = formatDimFeet(depth);
+    if (d) parts.push(`D ${d}`);
+  }
+  if (keys.includes('height')) {
+    const h = formatDimFeet(height);
+    if (h) parts.push(`H ${h}`);
+  }
   if (!parts.length) return '';
   return `(Size : ${parts.join(' x ')})`;
 }
@@ -225,23 +233,18 @@ export function buildSizeText({ width, depth, height } = {}) {
 const SIZE_RE = /\s*\(Size\s*:[^)]*\)\s*/gi;
 const QTY_RE = /\s*\(Qty\s*:[^)]*\)\s*/gi;
 
-/** Keep / refresh Size + Qty clauses inside specification of work. */
-export function withSizeInSpec(specification, dims = {}, quantity) {
+export function withSizeInSpec(specification, dims = {}, quantity, formulaType) {
   let base = String(specification || '')
     .replace(SIZE_RE, ' ')
     .replace(QTY_RE, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  const size = buildSizeText(dims);
+  const size = formulaNeedsDims(formulaType) ? buildSizeText(dims, formulaType) : '';
   const q = Number(quantity);
   const qtyPart = Number.isFinite(q) && q > 0 ? `(Qty : ${q})` : '';
   return [base, size, qtyPart].filter(Boolean).join(' ').trim();
 }
 
-/**
- * For view/PDF: if BOQ has no section headers, insert category banners
- * so work appears under its category like the sample sheet.
- */
 export function withCategorySections(items = []) {
   if (!items.length) return items;
   if (items.some((i) => i.isSectionHeader)) return items;

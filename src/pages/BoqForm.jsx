@@ -10,6 +10,7 @@ import {
   FORMULA_TYPES,
   calcLineItem,
   formulaNeedsDims,
+  isAreaFormula,
   quantityFromSavedItem,
   resolveFormulaType,
   resolveProductBoqInfo,
@@ -18,7 +19,7 @@ import {
 
 function catLabel(cat) {
   if (!cat) return '';
-  return `${cat.code ? `${cat.code}. ` : ''}${cat.name}`;
+  return cat.name || '';
 }
 
 const inr = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 });
@@ -151,7 +152,7 @@ export default function BoqForm() {
           const cat = categories.find((c) => c._id === patch.categoryId);
           next.categoryLabel = catLabel(cat);
           next.formulaType = resolveFormulaType(next, cat);
-          if (cat?.formulaType === FORMULA_TYPES.W_H || cat?.formulaType === FORMULA_TYPES.W_D) {
+          if (isAreaFormula(cat?.formulaType)) {
             next.unit = next.unit === 'Nos' || next.unit === 'Rft' || next.unit === 'Lumpsum' ? 'Sft' : next.unit;
           }
         }
@@ -165,11 +166,19 @@ export default function BoqForm() {
           }
         }
 
+        // Switching to None → clear dims (do not ask W/H/D)
+        if (patch.formulaType === FORMULA_TYPES.NONE) {
+          next.width = '';
+          next.height = '';
+          next.depth = '';
+        }
+
         const dimOrQtyChanged =
           patch.width !== undefined ||
           patch.height !== undefined ||
           patch.depth !== undefined ||
-          patch.quantity !== undefined;
+          patch.quantity !== undefined ||
+          patch.formulaType !== undefined;
         if (dimOrQtyChanged || patch.specification !== undefined) {
           next.specification = withSizeInSpec(
             next.specification,
@@ -178,7 +187,8 @@ export default function BoqForm() {
               depth: next.depth,
               height: next.height,
             },
-            next.quantity
+            next.quantity,
+            next.formulaType
           );
         }
 
@@ -275,6 +285,11 @@ export default function BoqForm() {
           return toast.error(`Enter Width & Depth for: ${i.specification.slice(0, 40)}`);
         }
       }
+      if (i.formulaType === FORMULA_TYPES.W_H_D) {
+        if (!(Number(i.width) > 0) || !(Number(i.height) > 0) || !(Number(i.depth) > 0)) {
+          return toast.error(`Enter Width, Height & Depth for: ${i.specification.slice(0, 40)}`);
+        }
+      }
     }
 
     const items = form.items
@@ -308,7 +323,8 @@ export default function BoqForm() {
               depth: i.depth,
               height: i.height,
             },
-            calc.quantity
+            calc.quantity,
+            calc.formulaType
           ),
           image: i.image || '',
         };
@@ -435,8 +451,8 @@ export default function BoqForm() {
 
           <div className="boq-item-legend">
             <span><b>Nos = 1</b> · enter <b>Quantity</b> + <b>Rate</b></span>
-            <span><b>W/D/H</b> = feet.inches — <b>5.5 = 5&apos;5&quot;</b>, <b>2.1 = 2&apos;1&quot;</b>, <b>10.11 = 10&apos;11&quot;</b></span>
-            <span>Amount = Qty × (W×H/D in feet) × Rate · Spec shows Size + Qty</span>
+            <span><b>None</b> = Qty × Rate only (no W/H/D)</span>
+            <span><b>W×H / W×D / W×H×D</b> = feet.inches (5.5 = 5&apos;5&quot;)</span>
           </div>
 
           <div className="item-rows">
@@ -445,7 +461,7 @@ export default function BoqForm() {
             return (
               <div
                 key={idx}
-                className={`item-row ${item.isSectionHeader ? 'is-section' : 'with-image has-dims'}`}
+                className={`item-row ${item.isSectionHeader ? 'is-section' : `with-image ${needsDims ? 'has-dims' : 'no-dims'}`}`}
               >
                 {item.isSectionHeader ? (
                   <>
@@ -519,7 +535,7 @@ export default function BoqForm() {
                       placeholder="Qty"
                       title="Quantity"
                     />
-                    {needsDims ? (
+                    {needsDims && (
                       <>
                         <input
                           type="text"
@@ -529,42 +545,15 @@ export default function BoqForm() {
                           placeholder="W 5.5"
                           title="Width feet.inches — 5.5 = 5'5&quot;"
                         />
-                        {item.formulaType === FORMULA_TYPES.W_D ? (
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={item.depth}
-                            onChange={(e) => updateItem(idx, { depth: e.target.value })}
-                            placeholder="D 2.1"
-                            title="Depth feet.inches — 2.1 = 2'1&quot;"
-                          />
-                        ) : (
-                          <input
-                            type="text"
-                            inputMode="decimal"
-                            value={item.height}
-                            onChange={(e) => updateItem(idx, { height: e.target.value })}
-                            placeholder="H 5.5"
-                            title="Height feet.inches — 5.5 = 5'5&quot;"
-                          />
-                        )}
-                        <input
-                          type="number"
-                          value={item.formulaArea ?? ''}
-                          readOnly
-                          title="Area in sft (feet.inches converted to feet)"
-                          placeholder="Area"
-                        />
-                      </>
-                    ) : (
-                      <>
                         <input
                           type="text"
                           inputMode="decimal"
-                          value={item.width}
-                          onChange={(e) => updateItem(idx, { width: e.target.value })}
-                          placeholder="W 5.5"
-                          title="Optional width — 5.5 = 5'5&quot;"
+                          value={item.height}
+                          onChange={(e) => updateItem(idx, { height: e.target.value })}
+                          placeholder="H 5.5"
+                          title="Height feet.inches — 5.5 = 5'5&quot;"
+                          disabled={item.formulaType === FORMULA_TYPES.W_D}
+                          style={item.formulaType === FORMULA_TYPES.W_D ? { opacity: 0.35 } : undefined}
                         />
                         <input
                           type="text"
@@ -572,15 +561,16 @@ export default function BoqForm() {
                           value={item.depth}
                           onChange={(e) => updateItem(idx, { depth: e.target.value })}
                           placeholder="D 2.1"
-                          title="Optional depth — 2.1 = 2'1&quot;"
+                          title="Depth feet.inches — 2.1 = 2'1&quot;"
+                          disabled={item.formulaType === FORMULA_TYPES.W_H}
+                          style={item.formulaType === FORMULA_TYPES.W_H ? { opacity: 0.35 } : undefined}
                         />
                         <input
-                          type="text"
-                          inputMode="decimal"
-                          value={item.height}
-                          onChange={(e) => updateItem(idx, { height: e.target.value })}
-                          placeholder="H 5.5"
-                          title="Optional height — 5.5 = 5'5&quot;"
+                          type="number"
+                          value={item.formulaArea ?? ''}
+                          readOnly
+                          title="Formula result (W×H / W×D / W×H×D)"
+                          placeholder="Area"
                         />
                       </>
                     )}

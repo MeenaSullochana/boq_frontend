@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plus, Pencil, Trash2, Upload, Search, Download } from 'lucide-react';
+import { Plus, Pencil, Trash2, Upload, Download } from 'lucide-react';
 import api, { assetUrl } from '../api';
 import { useAuth } from '../context/AuthContext';
 import Modal from '../components/Modal';
+import DataTable from '../components/DataTable';
 import {
   PRODUCT_FORMULA_OPTIONS,
   formulaLabel,
@@ -29,30 +30,62 @@ const inr = (n) => Number(n || 0).toLocaleString('en-IN', { minimumFractionDigit
 export default function Products() {
   const { isAdmin } = useAuth();
   const [items, setItems] = useState([]);
+  const [total, setTotal] = useState(0);
   const [cats, setCats] = useState([]);
   const [brands, setBrands] = useState([]);
   const [form, setForm] = useState(empty);
   const [editId, setEditId] = useState(null);
   const [open, setOpen] = useState(false);
   const [image, setImage] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
+  const [search, setSearch] = useState('');
   const [q, setQ] = useState('');
+  const [filterCategory, setFilterCategory] = useState('');
+  const [filterUnit, setFilterUnit] = useState('');
+  const [filterFormula, setFilterFormula] = useState('');
   const [newBrand, setNewBrand] = useState('');
   const [addingBrand, setAddingBrand] = useState(false);
 
-  const load = async () => {
-    const [prod, cat, brandRes] = await Promise.all([
-      api.get('/products', { params: { q: q || undefined, limit: 100 } }),
+  const loadMeta = useCallback(async () => {
+    const [cat, brandRes] = await Promise.all([
       api.get('/categories'),
       api.get('/brands'),
     ]);
-    setItems(prod.data.items || []);
     setCats(cat.data || []);
     setBrands(brandRes.data || []);
-  };
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.get('/products', {
+        params: {
+          page,
+          limit: pageSize,
+          q: q || undefined,
+          category: filterCategory || undefined,
+          unit: filterUnit || undefined,
+          formulaType: filterFormula || undefined,
+        },
+      });
+      setItems(data.items || []);
+      setTotal(data.total || 0);
+    } catch (e) {
+      toast.error(e.response?.data?.message || 'Load failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [page, pageSize, q, filterCategory, filterUnit, filterFormula]);
 
   useEffect(() => {
-    load().catch((e) => toast.error(e.response?.data?.message || 'Load failed'));
-  }, []);
+    loadMeta().catch((e) => toast.error(e.response?.data?.message || 'Load failed'));
+  }, [loadMeta]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const categories = cats.filter((c) => c.type === 'category');
   const subcategories = cats.filter(
@@ -97,7 +130,7 @@ export default function Products() {
     selectedCategory
   ).formulaType;
   const categoryFormulaHint = selectedCategory
-    ? selectedCategory.formulaType === 'W_H' || selectedCategory.formulaType === 'W_D'
+    ? ['W_H', 'W_D', 'W_H_D'].includes(selectedCategory.formulaType)
       ? selectedCategory.formulaType
       : inferFormulaType(selectedCategory.name)
     : 'none';
@@ -118,7 +151,7 @@ export default function Products() {
         setForm((f) => ({ ...f, brand: existing.name }));
         setAddingBrand(false);
         toast.success('Using existing brand');
-        load();
+        loadMeta();
       } else {
         toast.error(err.response?.data?.message || 'Could not add brand');
       }
@@ -174,6 +207,84 @@ export default function Products() {
     }
   };
 
+  const applySearch = () => {
+    setPage(1);
+    setQ(search.trim());
+  };
+
+  const columns = [
+    {
+      key: 'image',
+      label: 'Image',
+      render: (p) => (p.image ? <img className="thumb" src={assetUrl(p.image)} alt="" /> : '—'),
+    },
+    {
+      key: 'name',
+      label: 'Name / Spec',
+      render: (p) => (
+        <>
+          <strong>{p.name}</strong>
+          <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>
+            {(p.specification || '').slice(0, 120)}
+            {(p.specification || '').length > 120 ? '…' : ''}
+          </div>
+        </>
+      ),
+    },
+    {
+      key: 'brand',
+      label: 'Brand',
+      render: (p) => p.brand || '—',
+    },
+    { key: 'unit', label: 'Unit' },
+    {
+      key: 'formula',
+      label: 'Formula',
+      render: (p) => {
+        const resolved = resolveProductBoqInfo(p, p.category);
+        return (
+          <>
+            {formulaLabel(resolved.formulaType)}
+            {(!p.formulaType || p.formulaType === 'inherit') && (
+              <div style={{ color: 'var(--muted)', fontSize: 11 }}>from category</div>
+            )}
+          </>
+        );
+      },
+    },
+    {
+      key: 'rate',
+      label: 'Rate',
+      align: 'right',
+      render: (p) => inr(p.rate),
+    },
+    {
+      key: 'category',
+      label: 'Category',
+      render: (p) => p.category?.name || '—',
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (p) => (
+        <div className="actions">
+          {isAdmin ? (
+            <>
+              <button type="button" className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>
+                <Pencil size={14} />
+              </button>
+              <button type="button" className="btn btn-danger btn-sm" onClick={() => remove(p._id)}>
+                <Trash2 size={14} />
+              </button>
+            </>
+          ) : (
+            <span style={{ color: 'var(--muted)', fontSize: 12 }}>Create only</span>
+          )}
+        </div>
+      ),
+    },
+  ];
+
   return (
     <div>
       <div className="page-head">
@@ -191,88 +302,63 @@ export default function Products() {
             <Upload size={16} /> Excel import
             <input type="file" accept=".xlsx,.xls,.csv" hidden onChange={onImport} />
           </label>
-          <button className="btn btn-primary" onClick={openCreate}>
+          <button type="button" className="btn btn-primary" onClick={openCreate}>
             <Plus size={16} /> Add product
           </button>
         </div>
       </div>
 
-      <div className="filters">
-        <div style={{ display: 'flex', gap: 8, flex: 1, minWidth: 220 }}>
-          <input
-            placeholder="Search products…"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-          />
-          <button className="btn btn-secondary" onClick={load}>
-            <Search size={16} />
-          </button>
-        </div>
-      </div>
-
       <div className="panel">
-        <div className="table-wrap">
-          <table className="data">
-            <thead>
-              <tr>
-                <th>Image</th>
-                <th>Name / Spec</th>
-                <th>Brand</th>
-                <th>Unit</th>
-                <th>Formula</th>
-                <th>Rate</th>
-                <th>Category</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((p) => {
-                const resolved = resolveProductBoqInfo(p, p.category);
-                return (
-                  <tr key={p._id}>
-                    <td>{p.image ? <img className="thumb" src={assetUrl(p.image)} alt="" /> : '—'}</td>
-                    <td>
-                      <strong>{p.name}</strong>
-                      <div style={{ color: 'var(--muted)', fontSize: 12, marginTop: 4 }}>
-                        {(p.specification || '').slice(0, 120)}
-                        {(p.specification || '').length > 120 ? '…' : ''}
-                      </div>
-                    </td>
-                    <td>{p.brand || '—'}</td>
-                    <td>{p.unit}</td>
-                    <td>
-                      {formulaLabel(resolved.formulaType)}
-                      {(!p.formulaType || p.formulaType === 'inherit') && (
-                        <div style={{ color: 'var(--muted)', fontSize: 11 }}>from category</div>
-                      )}
-                    </td>
-                    <td>{inr(p.rate)}</td>
-                    <td>{p.category?.name || '—'}</td>
-                    <td>
-                      <div className="actions">
-                        {isAdmin ? (
-                          <>
-                            <button className="btn btn-secondary btn-sm" onClick={() => openEdit(p)}>
-                              <Pencil size={14} />
-                            </button>
-                            <button className="btn btn-danger btn-sm" onClick={() => remove(p._id)}>
-                              <Trash2 size={14} />
-                            </button>
-                          </>
-                        ) : (
-                          <span style={{ color: 'var(--muted)', fontSize: 12 }}>Create only</span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-              {!items.length && (
-                <tr><td colSpan={8} className="empty">No products</td></tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          columns={columns}
+          rows={items}
+          total={total}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={(n) => { setPageSize(n); setPage(1); }}
+          search={search}
+          onSearchChange={setSearch}
+          onSearch={applySearch}
+          searchPlaceholder="Search name, brand, spec…"
+          loading={loading}
+          empty="No products"
+          filters={(
+            <>
+              <select
+                value={filterCategory}
+                onChange={(e) => { setFilterCategory(e.target.value); setPage(1); }}
+              >
+                <option value="">All categories</option>
+                {categories.map((c) => (
+                  <option key={c._id} value={c._id}>{c.name}</option>
+                ))}
+              </select>
+              <select
+                value={filterUnit}
+                onChange={(e) => { setFilterUnit(e.target.value); setPage(1); }}
+              >
+                <option value="">All units</option>
+                <option>Nos</option>
+                <option>Sft</option>
+                <option>Rft</option>
+                <option>Sqm</option>
+                <option>Lumpsum</option>
+              </select>
+              <select
+                value={filterFormula}
+                onChange={(e) => { setFilterFormula(e.target.value); setPage(1); }}
+              >
+                <option value="">All formulas</option>
+                <option value="inherit">Inherit</option>
+                <option value="none">Qty × Rate</option>
+                <option value="W_H">W × H</option>
+                <option value="W_D">W × D</option>
+                <option value="W_H_D">W × H × D</option>
+              </select>
+            </>
+          )}
+        />
       </div>
 
       <Modal open={open} onClose={() => setOpen(false)} as="form" onSubmit={save}>
@@ -347,7 +433,7 @@ export default function Products() {
               >
                 <option value="">Select</option>
                 {categories.map((c) => (
-                  <option key={c._id} value={c._id}>{c.code ? `${c.code}. ` : ''}{c.name}</option>
+                  <option key={c._id} value={c._id}>{c.name}</option>
                 ))}
               </select>
             </label>
@@ -357,12 +443,11 @@ export default function Products() {
                 value={form.unit}
                 onChange={(e) => {
                   const unit = e.target.value;
-                  // Nos / Rft / LS → suggest explicit none override when category has area formula
                   const patch = { unit };
                   if (
                     form.formulaType === 'inherit' &&
                     ['Nos', 'Rft', 'Lumpsum'].includes(unit) &&
-                    (categoryFormulaHint === 'W_H' || categoryFormulaHint === 'W_D')
+                    ['W_H', 'W_D', 'W_H_D'].includes(categoryFormulaHint)
                   ) {
                     patch.formulaType = 'none';
                   }
